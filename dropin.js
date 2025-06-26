@@ -1,94 +1,169 @@
-// config.gs
-
-/**
- * Configuration constants for the TAR Validator + GSA Per Diem integration
- */
-const CONFIG = {
-  GSA_API_KEY: 'YOUR_GSA_API_KEY_HERE',  // Replace with your actual GSA API key
-  YEAR: '2025',                          // Fiscal year for lookup
-  DEFAULT_MIE: 79,                       // Default M&IE value fallback
-  DEFAULT_LODGING: 150,                 // Default lodging fallback
-  COST_BUFFER: 50                       // Acceptable buffer in overage (USD)
-};
-
-
-// utils.gs
-
-/**
- * Utility to average numeric strings from GSA rate response
- */
-function average(values) {
-  const nums = values.map(v => parseFloat(v)).filter(n => !isNaN(n));
-  const total = nums.reduce((a, b) => a + b, 0);
-  return nums.length ? total / nums.length : 0;
-}
-
-/**
- * Fetch per diem rate from GSA API by city/state
- * @param {string} city
- * @param {string} state
- * @returns {object|null}
- */
-function fetchPerDiemByCityState(city, state) {
-  const cleanedCity = encodeURIComponent(city.trim().replace(/[.’-]/g, ' '));
-  const url = `https://api.gsa.gov/travel/perdiem/v2/rates/city/${cleanedCity}/state/${state}/year/${CONFIG.YEAR}?api_key=${CONFIG.GSA_API_KEY}`;
-
-  try {
-    const response = UrlFetchApp.fetch(url);
-    const data = JSON.parse(response.getContentText());
-    return data.length ? data[0] : null;
-  } catch (error) {
-    Logger.log(`GSA fetch error: ${error.message}`);
-    return null;
-  }
-}
-
-
-// main.gs
-
-function doGet() {
-  return HtmlService.createHtmlOutputFromFile('index')
-    .setTitle('TAR Validator')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-}
-
-function include(filename) {
-  return HtmlService.createHtmlOutputFromFile(filename).getContent();
-}
-
-/**
- * Validates the TAR entry using per diem logic from GSA
- * @param {object} data
- */
-function validateTarWithPerDiem(data) {
-  const duration = parseInt(data.duration);
-  const claimedCost = parseFloat(data.totalCost);
-  const city = data.city;
-  const state = data.state.toUpperCase();
-
-  let rateData = fetchPerDiemByCityState(city, state);
-  let mie = CONFIG.DEFAULT_MIE;
-  let avgLodging = CONFIG.DEFAULT_LODGING;
-
-  if (rateData) {
-    mie = parseFloat(rateData.Meals) || CONFIG.DEFAULT_MIE;
-    avgLodging = average([
-      rateData.Jan, rateData.Feb, rateData.Mar, rateData.Apr,
-      rateData.May, rateData.Jun, rateData.Jul, rateData.Aug,
-      rateData.Sep, rateData.Oct, rateData.Nov, rateData.Dec
-    ]);
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
   }
 
-  const expectedCost = duration * (mie + avgLodging);
-  const isValid = claimedCost <= expectedCost + CONFIG.COST_BUFFER;
+  body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+  }
 
-  return {
-    expectedCost: expectedCost.toFixed(2),
-    claimedCost: claimedCost.toFixed(2),
-    duration,
-    isValid,
-    message: isValid
-      ? "✅ Trip cost is within expected per diem."
-      : "⚠️ Claimed cost exceeds expected per diem range."
-  };
-}
+  .container {
+    background: white;
+    border-radius: 15px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+    padding: 40px;
+    max-width: 600px;
+    width: 100%;
+    animation: slideUp 0.6s ease-out;
+  }
+
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(30px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 30px;
+  }
+
+  .header h1 {
+    color: #333;
+    font-size: 2.2rem;
+    margin-bottom: 10px;
+    font-weight: 300;
+  }
+
+  .header p {
+    color: #666;
+    font-size: 1.1rem;
+  }
+
+  .form-group {
+    margin-bottom: 20px;
+  }
+
+  .form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: #333;
+  }
+
+  .form-group input,
+  .form-group textarea {
+    width: 100%;
+    padding: 12px;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    font-size: 1rem;
+    background: white;
+    transition: border-color 0.3s ease;
+  }
+
+  .form-group input:focus,
+  .form-group textarea:focus {
+    outline: none;
+    border-color: #667eea;
+  }
+
+  .submit-btn {
+    width: 100%;
+    padding: 15px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 1.1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .submit-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+  }
+
+  .result {
+    margin-top: 30px;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 8px;
+  }
+
+  .validation-results {
+    display: none;
+  }
+
+  .validation-results.show {
+    display: block;
+    animation: fadeIn 0.3s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .score-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 15px;
+    margin: 15px 0;
+  }
+
+  .score-item {
+    text-align: center;
+    padding: 15px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  }
+
+  .score-value {
+    font-size: 2rem;
+    font-weight: bold;
+    margin-bottom: 5px;
+  }
+
+  .score-label {
+    font-size: 0.9rem;
+    color: #666;
+  }
+
+  .status-message {
+    margin-top: 20px;
+    padding: 15px;
+    border-radius: 8px;
+    text-align: center;
+  }
+
+  .status-message.success {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+  }
+
+  .status-message.error {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+  }
+</style>
