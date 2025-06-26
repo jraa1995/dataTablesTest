@@ -1,147 +1,94 @@
-<!DOCTYPE html>
-<html>
-  <head>
-    <base target="_top" />
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-      input, textarea {
-        border: 1px solid #ccc;
-        border-radius: 6px;
-        padding: 8px;
-        width: 100%;
-      }
-      label {
-        font-weight: 600;
-        margin-bottom: 4px;
-        display: block;
-      }
-      .form-group {
-        margin-bottom: 16px;
-      }
-      button {
-        background-color: #0081a7;
-        color: white;
-        padding: 10px 20px;
-        border: none;
-        border-radius: 8px;
-        font-weight: bold;
-        cursor: pointer;
-      }
-      button:hover {
-        background-color: #005f77;
-      }
-      .result {
-        margin-top: 20px;
-        background: #f8f8f8;
-        padding: 16px;
-        border-radius: 8px;
-      }
-    </style>
-    <script>
-      function handleSubmit(e) {
-        e.preventDefault();
+// config.gs
 
-        const form = document.getElementById("tar-form");
-        const data = {
-          tripDate: form.tripDate.value,
-          projectName: form.projectName.value,
-          taskOrder: form.taskOrder.value,
-          traveler: form.traveler.value,
-          duration: form.duration.value,
-          poc: form.poc.value,
-          authority: form.authority.value,
-          totalCost: form.totalCost.value,
-          purpose: form.purpose.value,
-          knowledge: form.knowledge.value,
-          city: form.city.value,
-          state: form.state.value
-        };
+/**
+ * Configuration constants for the TAR Validator + GSA Per Diem integration
+ */
+const CONFIG = {
+  GSA_API_KEY: 'YOUR_GSA_API_KEY_HERE',  // Replace with your actual GSA API key
+  YEAR: '2025',                          // Fiscal year for lookup
+  DEFAULT_MIE: 79,                       // Default M&IE value fallback
+  DEFAULT_LODGING: 150,                 // Default lodging fallback
+  COST_BUFFER: 50                       // Acceptable buffer in overage (USD)
+};
 
-        const file = form.tarFile.files[0];
-        if (file && file.type === "application/pdf") {
-          const reader = new FileReader();
-          reader.onload = function (event) {
-            const base64PDF = event.target.result.split(",")[1];
-            data.pdfContent = base64PDF;
-            google.script.run.withSuccessHandler(displayResult).validateTarWithPerDiem(data);
-          };
-          reader.readAsDataURL(file);
-        } else {
-          google.script.run.withSuccessHandler(displayResult).validateTarWithPerDiem(data);
-        }
-      }
 
-      function displayResult(result) {
-        const resBox = document.getElementById("result");
-        resBox.innerHTML = `
-          <p><strong>Expected Cost:</strong> $${result.expectedCost}</p>
-          <p><strong>Claimed Cost:</strong> $${result.claimedCost}</p>
-          <p><strong>Duration:</strong> ${result.duration} days</p>
-          <p style="color: ${result.isValid ? 'green' : 'red'};"><strong>${result.message}</strong></p>
-        `;
-      }
-    </script>
-  </head>
-  <body class="bg-gray-100 min-h-screen flex flex-col items-center justify-start p-6">
-    <h1 class="text-2xl font-bold mb-6">TAR Validator + GSA Per Diem</h1>
+// utils.gs
 
-    <form id="tar-form" onsubmit="handleSubmit(event)" class="w-full max-w-2xl bg-white p-6 rounded-lg shadow">
-      <div class="form-group">
-        <label>Trip Report Date</label>
-        <input type="date" name="tripDate" required />
-      </div>
-      <div class="form-group">
-        <label>City</label>
-        <input type="text" name="city" required />
-      </div>
-      <div class="form-group">
-        <label>State</label>
-        <input type="text" name="state" required />
-      </div>
-      <div class="form-group">
-        <label>Project Name</label>
-        <input type="text" name="projectName" required />
-      </div>
-      <div class="form-group">
-        <label>Task Order Number</label>
-        <input type="text" name="taskOrder" required />
-      </div>
-      <div class="form-group">
-        <label>Name of Traveler</label>
-        <input type="text" name="traveler" required />
-      </div>
-      <div class="form-group">
-        <label>Duration of Trip (days)</label>
-        <input type="number" name="duration" min="1" required />
-      </div>
-      <div class="form-group">
-        <label>Point of Contact (POC)</label>
-        <input type="text" name="poc" />
-      </div>
-      <div class="form-group">
-        <label>Gov Approval Authority</label>
-        <input type="text" name="authority" />
-      </div>
-      <div class="form-group">
-        <label>Total Cost of Trip ($)</label>
-        <input type="number" step="0.01" name="totalCost" required />
-      </div>
-      <div class="form-group">
-        <label>Purpose of the Trip</label>
-        <textarea name="purpose" rows="2"></textarea>
-      </div>
-      <div class="form-group">
-        <label>Knowledge Gained</label>
-        <textarea name="knowledge" rows="2"></textarea>
-      </div>
-      <div class="form-group">
-        <label>Upload TAR File (PDF)</label>
-        <input type="file" name="tarFile" accept="application/pdf" />
-      </div>
+/**
+ * Utility to average numeric strings from GSA rate response
+ */
+function average(values) {
+  const nums = values.map(v => parseFloat(v)).filter(n => !isNaN(n));
+  const total = nums.reduce((a, b) => a + b, 0);
+  return nums.length ? total / nums.length : 0;
+}
 
-      <button type="submit">Validate Trip</button>
-    </form>
+/**
+ * Fetch per diem rate from GSA API by city/state
+ * @param {string} city
+ * @param {string} state
+ * @returns {object|null}
+ */
+function fetchPerDiemByCityState(city, state) {
+  const cleanedCity = encodeURIComponent(city.trim().replace(/[.’-]/g, ' '));
+  const url = `https://api.gsa.gov/travel/perdiem/v2/rates/city/${cleanedCity}/state/${state}/year/${CONFIG.YEAR}?api_key=${CONFIG.GSA_API_KEY}`;
 
-    <div id="result" class="result w-full max-w-2xl"></div>
-  </body>
-</html>
+  try {
+    const response = UrlFetchApp.fetch(url);
+    const data = JSON.parse(response.getContentText());
+    return data.length ? data[0] : null;
+  } catch (error) {
+    Logger.log(`GSA fetch error: ${error.message}`);
+    return null;
+  }
+}
+
+
+// main.gs
+
+function doGet() {
+  return HtmlService.createHtmlOutputFromFile('index')
+    .setTitle('TAR Validator')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+/**
+ * Validates the TAR entry using per diem logic from GSA
+ * @param {object} data
+ */
+function validateTarWithPerDiem(data) {
+  const duration = parseInt(data.duration);
+  const claimedCost = parseFloat(data.totalCost);
+  const city = data.city;
+  const state = data.state.toUpperCase();
+
+  let rateData = fetchPerDiemByCityState(city, state);
+  let mie = CONFIG.DEFAULT_MIE;
+  let avgLodging = CONFIG.DEFAULT_LODGING;
+
+  if (rateData) {
+    mie = parseFloat(rateData.Meals) || CONFIG.DEFAULT_MIE;
+    avgLodging = average([
+      rateData.Jan, rateData.Feb, rateData.Mar, rateData.Apr,
+      rateData.May, rateData.Jun, rateData.Jul, rateData.Aug,
+      rateData.Sep, rateData.Oct, rateData.Nov, rateData.Dec
+    ]);
+  }
+
+  const expectedCost = duration * (mie + avgLodging);
+  const isValid = claimedCost <= expectedCost + CONFIG.COST_BUFFER;
+
+  return {
+    expectedCost: expectedCost.toFixed(2),
+    claimedCost: claimedCost.toFixed(2),
+    duration,
+    isValid,
+    message: isValid
+      ? "✅ Trip cost is within expected per diem."
+      : "⚠️ Claimed cost exceeds expected per diem range."
+  };
+}
