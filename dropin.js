@@ -33,6 +33,7 @@ def fetch_all_awards():
     page = 1
     has_next = True
     all_results = []
+    retries = 5
 
     while has_next:
         payload = {
@@ -49,9 +50,17 @@ def fetch_all_awards():
             "fields": FIELDS
         }
 
-        response = requests.post(API_URL, json=payload)
-        if response.status_code != 200:
-            raise Exception(f"❌ Error: {response.status_code}\n{response.text}")
+        for attempt in range(retries):
+            try:
+                response = requests.post(API_URL, json=payload, timeout=30)
+                response.raise_for_status()
+                break  # If successful, exit retry loop
+            except (ConnectionError, HTTPError) as e:
+                wait_time = 2 ** attempt
+                print(f"⚠️ Attempt {attempt+1} failed. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+        else:
+            raise Exception(f"❌ Failed after {retries} attempts. Last error: {e}")
 
         data = response.json()
         results = data.get('results', [])
@@ -63,7 +72,6 @@ def fetch_all_awards():
         page += 1
 
     return all_results
-
 
 def upload_to_google_sheets(data):
     df = pd.DataFrame(data)
