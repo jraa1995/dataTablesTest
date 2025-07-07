@@ -87,4 +87,4 @@ for period_start, period_end in monthly_periods:
         page += 1
         time.sleep(1.2)  # respect API rate limits
 
-print("✅ Data successfully pulled into Google Sheet.")
+print("✅ Data successfully pulled into Google Sheet test.")
