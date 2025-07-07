@@ -1,169 +1,103 @@
-<style>
-  * {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-  }
+import os
+import requests
+import pandas as pd
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
-  body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    min-height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    padding: 20px;
-  }
+# CONFIG
+SERVICE_ACCOUNT_FILE = 'service_account.json'
+SPREADSHEET_ID = 'YOUR_SPREADSHEET_ID'
+SHEET_NAME = 'test'
 
-  .container {
-    background: white;
-    border-radius: 15px;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-    padding: 40px;
-    max-width: 600px;
-    width: 100%;
-    animation: slideUp 0.6s ease-out;
-  }
+FIELDS = [
+    "Award ID", "Recipient Name", "Start Date", "End Date", "Award Amount",
+    "Awarding Agency", "Awarding Sub Agency", "Contract Award Type",
+    "Award Type", "Funding Agency", "Funding Sub Agency"
+]
 
-  @keyframes slideUp {
-    from {
-      opacity: 0;
-      transform: translateY(30px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
+API_URL = "https://api.usaspending.gov/api/v2/search/spending_by_award/"
+LIMIT = 100
+START_DATE = "2018-10-01"
+END_DATE = "2019-09-30"
 
-  .header {
-    text-align: center;
-    margin-bottom: 30px;
-  }
 
-  .header h1 {
-    color: #333;
-    font-size: 2.2rem;
-    margin-bottom: 10px;
-    font-weight: 300;
-  }
+def get_authenticated_sheet_service():
+    creds = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE,
+        scopes=['https://www.googleapis.com/auth/spreadsheets']
+    )
+    return build('sheets', 'v4', credentials=creds)
 
-  .header p {
-    color: #666;
-    font-size: 1.1rem;
-  }
 
-  .form-group {
-    margin-bottom: 20px;
-  }
+def fetch_all_awards():
+    page = 1
+    has_next = True
+    all_results = []
 
-  .form-group label {
-    display: block;
-    margin-bottom: 8px;
-    font-weight: 500;
-    color: #333;
-  }
+    while has_next:
+        payload = {
+            "subawards": False,
+            "limit": LIMIT,
+            "page": page,
+            "filters": {
+                "award_type_codes": ["A", "B", "C"],
+                "time_period": [{
+                    "start_date": START_DATE,
+                    "end_date": END_DATE
+                }]
+            },
+            "fields": FIELDS
+        }
 
-  .form-group input,
-  .form-group textarea {
-    width: 100%;
-    padding: 12px;
-    border: 2px solid #ddd;
-    border-radius: 8px;
-    font-size: 1rem;
-    background: white;
-    transition: border-color 0.3s ease;
-  }
+        response = requests.post(API_URL, json=payload)
+        if response.status_code != 200:
+            raise Exception(f"❌ Error: {response.status_code}\n{response.text}")
 
-  .form-group input:focus,
-  .form-group textarea:focus {
-    outline: none;
-    border-color: #667eea;
-  }
+        data = response.json()
+        results = data.get('results', [])
+        if not results:
+            break
 
-  .submit-btn {
-    width: 100%;
-    padding: 15px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-size: 1.1rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
+        all_results.extend(results)
+        has_next = data.get('page_metadata', {}).get('hasNext', False)
+        page += 1
 
-  .submit-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
-  }
+    return all_results
 
-  .result {
-    margin-top: 30px;
-    padding: 20px;
-    background: #f8f9fa;
-    border-radius: 8px;
-  }
 
-  .validation-results {
-    display: none;
-  }
+def upload_to_google_sheets(data):
+    df = pd.DataFrame(data)
+    df = df[FIELDS]  # ensure column order
+    values = [FIELDS] + df.fillna("").astype(str).values.tolist()
 
-  .validation-results.show {
-    display: block;
-    animation: fadeIn 0.3s ease;
-  }
+    service = get_authenticated_sheet_service()
+    sheet = service.spreadsheets()
 
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
+    # Clear the sheet first
+    clear_request = {"requests": [{"updateCells": {"range": {"sheetId": 0}, "fields": "*"}}]}
+    try:
+        sheet.batchUpdate(spreadsheetId=SPREADSHEET_ID, body=clear_request).execute()
+    except:
+        pass  # continue even if we can't clear
 
-  .score-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 15px;
-    margin: 15px 0;
-  }
+    body = {"values": values}
+    sheet.values().update(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{SHEET_NAME}!A1",
+        valueInputOption="RAW",
+        body=body
+    ).execute()
 
-  .score-item {
-    text-align: center;
-    padding: 15px;
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-  }
 
-  .score-value {
-    font-size: 2rem;
-    font-weight: bold;
-    margin-bottom: 5px;
-  }
+def main():
+    print("🔄 Fetching data from USAspending.gov...")
+    data = fetch_all_awards()
+    print(f"✅ Fetched {len(data)} records")
 
-  .score-label {
-    font-size: 0.9rem;
-    color: #666;
-  }
+    print("📤 Uploading to Google Sheets...")
+    upload_to_google_sheets(data)
+    print("✅ Upload complete!")
 
-  .status-message {
-    margin-top: 20px;
-    padding: 15px;
-    border-radius: 8px;
-    text-align: center;
-  }
 
-  .status-message.success {
-    background: #d4edda;
-    color: #155724;
-    border: 1px solid #c3e6cb;
-  }
-
-  .status-message.error {
-    background: #f8d7da;
-    color: #721c24;
-    border: 1px solid #f5c6cb;
-  }
-</style>
+if __name__ == "__main__":
+    main()
